@@ -1,0 +1,13 @@
+[package]
+name = "omniview"
+description = "OmniView: first-person Minecraft world renderer that reconstructs a bot's POV from OmniCore world state."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+omnicore = { path = "../omnicore" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+png = "0.17"

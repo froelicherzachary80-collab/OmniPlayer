@@ -1,0 +1,12 @@
+/target
+node_modules/
+dist/
+.gradle/
+tests/test-server/build/
+__pycache__/
+*.pyc
+.env
+/data/
+/runtime/
+*.log
+.DS_Store
