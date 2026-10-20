@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { adminEvents, api, duration } from "../api.ts";
 import { Badge, Button, Card, Empty, Field, Input, Select, Stat, Tabs, stateTone, useAction, useData } from "../ui/kit.tsx";
 
-type Tab = "dash" | "console" | "players" | "config" | "backups";
+type Tab = "dash" | "console" | "players" | "addons" | "config" | "backups";
 
 export function ServerDetail() {
   const { id } = useParams();
@@ -44,7 +44,7 @@ export function ServerDetail() {
           <Button variant="soft" busy={busy === "join"} disabled={srv.state !== "running"} onClick={() => run("join", () => api(`/api/servers/${id}/join-ai`, { body: {} }), "AI players joining")}>Join AI players</Button>
         </div>
       )}
-      <Tabs<Tab> value={tab} onChange={setTab} tabs={[["dash", "Dashboard"], ...(managed ? ([["console", "Console"], ["players", "Players & allowlist"], ["config", "Configuration"], ["backups", "Backups"]] as [Tab, string][]) : [])]} />
+      <Tabs<Tab> value={tab} onChange={setTab} tabs={[["dash", "Dashboard"], ...(managed ? ([["console", "Console"], ["players", "Players & allowlist"], ["addons", srv.software === "fabric" ? "Mods" : "Plugins"], ["config", "Configuration"], ["backups", "Backups"]] as [Tab, string][]) : [])]} />
       {tab === "dash" && (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -58,6 +58,17 @@ export function ServerDetail() {
               <span className="flex-1 break-all">{srv.address}</span>
               <Button small variant="soft" onClick={() => navigator.clipboard?.writeText(srv.address)}>Copy</Button>
             </div>
+            <p className="mt-2 text-xs text-muted">Minecraft Java Edition {srv.version} → Multiplayer → Add Server.</p>
+            {srv.bedrock_address && (
+              <>
+                <div className="mt-3 text-sm font-semibold">iPhone / Bedrock Minecraft</div>
+                <div className="mt-1 flex items-center gap-2 rounded-xl bg-panel2 p-3 font-mono text-lg">
+                  <span className="flex-1 break-all">{srv.bedrock_address}</span>
+                  <Button small variant="soft" onClick={() => navigator.clipboard?.writeText(srv.bedrock_address)}>Copy</Button>
+                </div>
+                <p className="mt-1 text-xs text-muted">In Minecraft on iPhone: Play → Servers → Add Server, enter the address and port above.</p>
+              </>
+            )}
             {srv.last_error && <p className="mt-2 text-sm text-live">{srv.last_error}</p>}
           </Card>
           <Card title="AI players on this server" className="mt-4">
@@ -72,6 +83,7 @@ export function ServerDetail() {
       )}
       {tab === "console" && <Console id={id!} running={srv.state === "running"} />}
       {tab === "players" && <Players srv={srv} reload={s.reload} />}
+      {tab === "addons" && <Addons srv={srv} />}
       {tab === "config" && <Config srv={srv} reload={s.reload} />}
       {tab === "backups" && <Backups id={id!} />}
     </>
@@ -124,6 +136,7 @@ function Players({ srv, reload }: { srv: any; reload: () => void }) {
           ))}
         </ul>
       </Card>
+      <Bedrock srv={srv} reload={reload} />
       <Card title="Invite a human player" className="md:col-span-2">
         <form className="flex gap-2" onSubmit={async (e) => { e.preventDefault(); const f = new FormData(e.currentTarget); await run("inv", async () => { setInvite(await api(`/api/servers/${srv.id}/invite`, { body: { mc_username: f.get("n") } })); reload(); inv.reload(); }); }}>
           <Input name="n" placeholder="Friend's Minecraft username" autoCapitalize="none" />
@@ -177,5 +190,105 @@ function Backups({ id }: { id: string }) {
         <ul className="divide-y divide-line text-sm">{b.data.map((x) => <li key={x.file} className="flex min-h-11 items-center justify-between"><span className="break-all font-mono">{x.file}</span><span className="text-muted">{(x.size / 1048576).toFixed(1)} MB</span></li>)}</ul>
       )}
     </Card>
+  );
+}
+
+function Bedrock({ srv, reload }: { srv: any; reload: () => void }) {
+  const [tag, setTag] = useState("");
+  const { busy, run } = useAction();
+  const supported = srv.software === "paper" || srv.software === "fabric";
+  return (
+    <Card title="iPhone / Bedrock players" className="md:col-span-2">
+      {!supported ? (
+        <p className="text-sm text-muted">Minecraft on iPhone is Bedrock Edition. It can join through Geyser, which runs as a plugin or mod, so it needs a Paper or Fabric server. Create a Paper server to use this.</p>
+      ) : (
+        <>
+          <p className="mb-2 text-sm text-muted">Installs Geyser + Floodgate so Minecraft on iPhone, Android, consoles and Windows can join this Java server. Bedrock players sign in with their Xbox account.</p>
+          <Button variant={srv.bedrock ? "soft" : "primary"} busy={busy === "b"} onClick={() => run("b", () => api(`/api/servers/${srv.id}/bedrock`, { body: { enabled: !srv.bedrock } }).then(reload), srv.bedrock ? "Bedrock off — restart to apply" : "Bedrock on — restart the server to apply")}>
+            {srv.bedrock ? "Turn off Bedrock joining" : "Let iPhone players join"}
+          </Button>
+          {srv.bedrock && (
+            <>
+              <p className="mt-3 font-mono">{srv.bedrock_address}</p>
+              <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); run("t", () => api(`/api/servers/${srv.id}/bedrock/players`, { body: { gamertag: tag } }).then(() => { setTag(""); reload(); }), "Gamertag allowed"); }}>
+                <Input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Xbox gamertag" autoCapitalize="none" />
+                <Button>Allow</Button>
+              </form>
+              <ul className="mt-2 space-y-1 text-sm">{(srv.bedrock_players ?? []).map((t: string) => <li key={t}>{t}</li>)}</ul>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function Addons({ srv }: { srv: any }) {
+  const supported = srv.software === "paper" || srv.software === "fabric";
+  const list = useData(() => (supported ? api(`/api/servers/${srv.id}/addons`) : Promise.resolve(null)), [srv.id]);
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<any[] | null>(null);
+  const [msg, setMsg] = useState<string[]>([]);
+  const file = useRef<HTMLInputElement>(null);
+  const { busy, run } = useAction();
+  if (!supported) {
+    return (
+      <Card title="Plugins & mods">
+        <p className="text-sm text-muted">Vanilla servers can't load plugins or mods. Create a <b>Paper</b> server for plugins (EssentialsX, LuckPerms, WorldEdit…) or a <b>Fabric</b> server for mods. Data packs work on any server: put them in the world's datapacks folder.</p>
+      </Card>
+    );
+  }
+  const kind = srv.software === "fabric" ? "mods" : "plugins";
+  const install = (slug: string) => run(`i-${slug}`, async () => {
+    const r = await api(`/api/servers/${srv.id}/addons/modrinth`, { body: { slug } });
+    setMsg([`Installed ${r.installed.join(", ")}. ${r.note}`, ...r.warnings]);
+    list.reload();
+  });
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <Card title={`Find ${kind} on Modrinth`}>
+        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); run("s", async () => setHits(await api(`/api/servers/${srv.id}/addons/search?q=${encodeURIComponent(q)}`))); }}>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={kind === "plugins" ? "e.g. essentials, luckperms" : "e.g. lithium, voice chat"} autoCapitalize="none" />
+          <Button busy={busy === "s"}>Search</Button>
+        </form>
+        <p className="mt-1 text-xs text-muted">Only shows {kind} with a build for Minecraft {srv.version}. Required dependencies are installed too.</p>
+        {hits && !hits.length && <Empty>Nothing found for {srv.version}.</Empty>}
+        <ul className="mt-2 divide-y divide-line">
+          {(hits ?? []).map((h) => (
+            <li key={h.slug} className="flex min-h-14 items-center gap-3 py-2">
+              {h.icon_url ? <img src={h.icon_url} alt="" className="size-10 rounded-lg" /> : <div className="size-10 rounded-lg bg-panel2" />}
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold">{h.title}</div>
+                <div className="line-clamp-2 text-xs text-muted">{h.description}</div>
+              </div>
+              <Button small busy={busy === `i-${h.slug}`} onClick={() => install(h.slug)}>Install</Button>
+            </li>
+          ))}
+        </ul>
+      </Card>
+      <Card title={`Installed ${kind}`} action={<Button small variant="soft" onClick={() => file.current?.click()}>Upload .jar</Button>}>
+        <input ref={file} type="file" accept=".jar,application/java-archive" className="hidden" onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (!f) return;
+          const fd = new FormData();
+          fd.append("file", f, f.name);
+          run("u", () => api(`/api/servers/${srv.id}/addons/upload`, { raw: fd }).then((r) => { setMsg([`Uploaded ${r.file}. ${r.note}`]); list.reload(); }));
+          e.target.value = "";
+        }} />
+        {msg.map((m, i) => <p key={i} className={`mb-2 text-sm ${i ? "text-warn" : "text-brand"}`}>{m}</p>)}
+        {list.data?.restart_needed && <p className="mb-2 text-xs text-muted">Changes load on the next restart.</p>}
+        {!list.data?.files?.length ? <Empty>No {kind} installed.</Empty> : (
+          <ul className="divide-y divide-line text-sm">
+            {list.data.files.map((x: any) => (
+              <li key={x.file} className="flex min-h-11 items-center gap-2">
+                <span className="flex-1 break-all font-mono">{x.file}</span>
+                <span className="text-muted">{(x.size / 1048576).toFixed(1)} MB</span>
+                <button className="min-h-11 px-3 text-muted" aria-label={`Remove ${x.file}`} onClick={() => confirm(`Remove ${x.file}?`) && run("rm", () => api(`/api/servers/${srv.id}/addons/${encodeURIComponent(x.file)}`, { method: "DELETE" }).then(list.reload))}>×</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
   );
 }

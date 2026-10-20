@@ -41,7 +41,7 @@ export function ServerWizard({ open, onClose }: { open: boolean; onClose: () => 
       <div className="space-y-3">
         <Field label="Server name"><Input value={f.name} onChange={set("name")} /></Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Software"><Select value={f.software} onChange={set("software")} options={[["vanilla", "Vanilla (official)"], ["paper", "Paper"], ["external", "Existing server (external)"]]} /></Field>
+          <Field label="Software"><Select value={f.software} onChange={set("software")} options={[["vanilla", "Vanilla (official)"], ["paper", "Paper (plugins)"], ["fabric", "Fabric (mods)"], ["external", "Existing server (external)"]]} /></Field>
           <Field label="Version"><Select value={f.version} onChange={set("version")} options={(versions.data?.versions ?? ["26.3"]).map((v: string) => [v, v])} /></Field>
         </div>
         {versions.data?.warning && <p className="text-xs text-warn">{versions.data.warning}</p>}
@@ -66,6 +66,7 @@ export function ServerWizard({ open, onClose }: { open: boolean; onClose: () => 
               <Field label="Memory (MB)"><Input type="number" min={1024} step={512} value={f.memory_mb} onChange={set("memory_mb")} /></Field>
             </div>
             <Toggle checked={f.auto_start_bots} onChange={set("auto_start_bots")} label="Auto-start assigned AI players" />
+            {["paper", "fabric"].includes(f.software) && <Toggle checked={!!f.bedrock} onChange={set("bedrock")} label="Let iPhone / Bedrock Minecraft players join (Geyser)" />}
           </>
         )}
         <Button className="w-full" busy={busy === "c"} onClick={() => run("c", async () => { const s = await api("/api/servers", { body: f }); onClose(); nav(`/admin/servers/${s.id}`); }, "Server created")}>Create server</Button>

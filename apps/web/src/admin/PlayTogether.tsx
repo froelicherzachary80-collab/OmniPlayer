@@ -33,7 +33,7 @@ export function PlayTogether() {
           ) : (
             <div className="flex gap-2">
               <Input value={newName} onChange={(e) => setNewName(e.target.value)} aria-label="New server name" />
-              <Button busy={busy === "create"} onClick={() => run("create", async () => { const n = await api("/api/servers", { body: { name: newName, software: "vanilla", version: "26.3", auth_mode: "offline" } }); setServerId(n.id); servers.reload(); }, "Server created")}>
+              <Button busy={busy === "create"} onClick={() => run("create", async () => { const n = await api("/api/servers", { body: { name: newName, software: "paper", version: "26.3", auth_mode: "offline", bedrock: true } }); setServerId(n.id); servers.reload(); }, "Server created")}>
                 Create
               </Button>
             </div>
@@ -126,6 +126,17 @@ export function PlayTogether() {
             <span className="flex-1 break-all">{s?.address ?? "—"}</span>
             {s && <Button small variant="soft" onClick={() => navigator.clipboard?.writeText(s.address)}>Copy</Button>}
           </div>
+          {s?.bedrock_address ? (
+            <>
+              <p className="mt-3 text-sm text-muted">Playing on iPhone? Minecraft → Play → Servers → Add Server:</p>
+              <div className="mt-2 flex items-center gap-2 rounded-xl bg-panel2 p-3 font-mono text-lg">
+                <span className="flex-1 break-all">{s.bedrock_address}</span>
+                <Button small variant="soft" onClick={() => navigator.clipboard?.writeText(s.bedrock_address)}>Copy</Button>
+              </div>
+            </>
+          ) : s && (s.software === "paper" || s.software === "fabric") ? (
+            <p className="mt-3 text-sm text-muted">Want to join from Minecraft on iPhone? Open the server → Players → "Let iPhone players join".</p>
+          ) : null}
           <p className="mt-2 text-xs text-muted">On the same Wi-Fi use this computer's LAN IP. Over the internet, use a VPN such as Tailscale or forward the port (see docs/HOSTING.md). Try saying "follow me", "let's build a house" or "help me mine diamonds" in chat.</p>
         </Card>
       </div>

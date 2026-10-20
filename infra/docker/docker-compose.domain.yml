@@ -1,0 +1,19 @@
+# Adds HTTPS on your own domain:
+#   docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.domain.yml up -d --build
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    env_file: ../../.env
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [omniplayer]
+  omniplayer:
+    ports: !override
+      - "8189:8189/udp"
+      - "25565-25575:25565-25575"
+      - "19132-19140:19132-19140/udp"
+volumes:
+  caddy-data:

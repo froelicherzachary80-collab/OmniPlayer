@@ -2,7 +2,7 @@
 
 export type AccountType = "microsoft" | "offline";
 export type AuthMode = "online" | "offline";
-export type ServerSoftware = "vanilla" | "paper" | "custom" | "external";
+export type ServerSoftware = "vanilla" | "paper" | "fabric" | "custom" | "external";
 export type GameMode = "survival" | "creative" | "adventure" | "hardcore";
 export type Difficulty = "peaceful" | "easy" | "normal" | "hard";
 export type BotMode =
@@ -113,6 +113,10 @@ export interface ServerConfig {
   smp_preset: string | null;
   eula_accepted_at: number | null;
   properties: Record<string, string>;
+  /** Geyser + Floodgate: lets iPhone/Bedrock Minecraft players join (Paper/Fabric only). */
+  bedrock: boolean;
+  bedrock_port: number;
+  bedrock_players: string[];
   created_at: number;
 }
 

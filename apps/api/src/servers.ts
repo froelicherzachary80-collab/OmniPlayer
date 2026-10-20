@@ -33,6 +33,9 @@ export function defaultServer(partial: Partial<ServerConfig>): ServerConfig {
     smp_preset: null,
     eula_accepted_at: null,
     properties: {},
+    bedrock: false,
+    bedrock_port: 19132,
+    bedrock_players: [],
     created_at: Date.now(),
     ...partial,
   };
@@ -126,7 +129,13 @@ export class ServerRegistry extends EventEmitter {
     const used = new Set(this.list().map((x) => x.port));
     let port = partial.port ?? 25565;
     while (used.has(port) && partial.software !== "external") port++;
-    const s = defaultServer({ ...partial, port });
+    const usedB = new Set(this.list().map((x) => x.bedrock_port));
+    let bport = partial.bedrock_port ?? 19132;
+    while (usedB.has(bport)) bport++;
+    if (partial.bedrock && !["paper", "fabric"].includes(partial.software ?? "vanilla")) {
+      throw new Error("iPhone/Bedrock players need a Paper or Fabric server (Geyser runs as a plugin or mod).");
+    }
+    const s = defaultServer({ ...partial, port, bedrock_port: bport });
     this.save(s);
     return s;
   }
@@ -165,6 +174,9 @@ export class ServerRegistry extends EventEmitter {
       properties: s.properties,
       eula_accepted_at: s.eula_accepted_at,
       bind_ip: (s as any).bind_ip,
+      bedrock: !!s.bedrock,
+      bedrock_port: s.bedrock_port ?? 19132,
+      bedrock_players: [...(s.bedrock_players ?? [])],
     };
   }
 
@@ -218,6 +230,12 @@ export class ServerRegistry extends EventEmitter {
     this.save(s);
     const inst = this.instances.get(id);
     if (inst) await inst.whitelistRemove(name);
+  }
+
+  bedrockAddress(s: ServerConfig): string | null {
+    if (!s.bedrock) return null;
+    const host = config.publicHost || "<this server's IP>";
+    return `${host} port ${s.bedrock_port ?? 19132}`;
   }
 
   connectAddress(s: ServerConfig): string {

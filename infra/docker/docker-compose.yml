@@ -15,6 +15,7 @@ services:
       - "8889:8889"          # WebRTC signalling (also proxied through :8080/api/media)
       - "8189:8189/udp"      # WebRTC media (ICE)
       - "25565-25575:25565-25575" # Minecraft servers created in the dashboard
+      - "19132-19140:19132-19140/udp" # Bedrock/iPhone players (Geyser)
     deploy:
       resources:
         limits: { cpus: "${OMNI_CPU_LIMIT:-6}", memory: "${OMNI_MEM_LIMIT:-12g}" }

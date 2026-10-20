@@ -21,13 +21,14 @@ COPY apps apps
 RUN npm ci && npm run build -w apps/web
 
 # ── Runtime ──
-FROM node:22-bookworm
+FROM node:22-bookworm AS nodebin
+FROM ubuntu:24.04
 ARG MEDIAMTX_VERSION=v1.21.2
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg espeak-ng python3 fonts-dejavu-core ca-certificates curl wget gnupg \
- && wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor > /usr/share/keyrings/adoptium.gpg \
- && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" > /etc/apt/sources.list.d/adoptium.list \
- && apt-get update && apt-get install -y --no-install-recommends temurin-25-jre temurin-21-jre \
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      openjdk-25-jre-headless openjdk-21-jre-headless ffmpeg espeak-ng python3 fonts-dejavu-core ca-certificates curl tar \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=nodebin /usr/local/bin/node /usr/local/bin/node
 RUN mkdir -p /app/runtime/bin && curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz" | tar xz -C /app/runtime/bin mediamtx
 WORKDIR /app
 COPY --from=web /src/node_modules node_modules
@@ -41,5 +42,6 @@ COPY infra infra
 COPY services/voicebox services/voicebox
 ENV OMNI_DATA_DIR=/data OMNI_PORT=8080 NODE_ENV=production
 VOLUME /data
-EXPOSE 8080 8554 8888 8889 8189/udp 25565-25575
+EXPOSE 8080 8554 8888 8889 8189/udp 19132/udp 25565-25575
+HEALTHCHECK --interval=30s --timeout=5s CMD curl -fs http://127.0.0.1:8080/api/health || exit 1
 CMD ["node", "apps/api/src/main.ts"]

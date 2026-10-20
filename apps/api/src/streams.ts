@@ -49,7 +49,10 @@ export class StreamManager {
     const runtime = runtimeMediaMtxConfig(base, config.recordingsDir);
     const file = join(config.dataDir, "mediamtx.runtime.yml");
     await writeFile(file, runtime);
-    this.mtx = spawn(config.mediamtxBin, [file], { cwd: config.dataDir, stdio: ["ignore", "pipe", "pipe"] });
+    // Behind Docker/NAT MediaMTX only knows its private IP; advertise the public one so WebRTC reaches phones.
+    const env = { ...process.env };
+    if (config.publicHost && !env.MTX_WEBRTCADDITIONALHOSTS) env.MTX_WEBRTCADDITIONALHOSTS = config.publicHost;
+    this.mtx = spawn(config.mediamtxBin, [file], { cwd: config.dataDir, env, stdio: ["ignore", "pipe", "pipe"] });
     this.mtx.stdout!.on("data", () => {});
     this.mtx.stderr!.on("data", () => {});
     this.mtx.on("exit", (c) => {

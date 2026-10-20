@@ -1,0 +1,5 @@
+# Automatic HTTPS for your own domain. Set OMNI_DOMAIN in .env and point its DNS at this server.
+{$OMNI_DOMAIN} {
+	encode gzip
+	reverse_proxy omniplayer:8080
+}

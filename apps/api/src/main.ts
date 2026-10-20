@@ -10,7 +10,7 @@ import os from "node:os";
 import { join } from "node:path";
 import { randomBytes, createHash } from "node:crypto";
 import { BOT_MODES, compatible, slugify, validUsername, type Creator, type ServerConfig } from "@omniplayer/shared";
-import { offlineUuid, PRESETS, preset, listVanillaReleases, findJavas } from "@omniplayer/server-manager";
+import { offlineUuid, PRESETS, preset, listVanillaReleases, findJavas, addonDir, listAddons, saveUpload, removeAddon, searchModrinth, installModrinth, loaderFor, installGeyser } from "@omniplayer/server-manager";
 import { config } from "./config.ts";
 import { Db } from "./db.ts";
 import { createSession, decrypt, encrypt, hashPassword, newId, revokeSession, sessionUser, verifyPassword, RateLimiter } from "./security.ts";
@@ -597,6 +597,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       players: external ? [] : [...(inst?.players ?? [])],
       metrics: inst ? await inst.metrics() : null,
       address: servers.connectAddress(s),
+      bedrock_address: servers.bedrockAddress(s),
       ping,
       ai_players: creators().filter((c) => c.server_id === s.id).map((c) => ({ id: c.id, name: c.streamer_name, state: bots.get(c.id)?.state ?? "stopped" })),
       last_error: inst?.lastError ?? "",
@@ -703,6 +704,74 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     if (!admin(req, reply)) return;
     return servers.instance((req.params as any).id).listBackups(config.backupsDir);
   });
+  // ── Plugins & mods ──
+  const addonCtx = (id: string) => {
+    const s = servers.get(id);
+    if (!s) throw new Error("server not found");
+    const loader = loaderFor(s.software);
+    if (!loader) throw new Error("Plugins need a Paper server and mods need a Fabric server. Vanilla servers can't load either.");
+    return { s, loader, dir: addonDir(join(config.serversDir, s.id), loader) };
+  };
+  app.get("/api/servers/:id/addons", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const { loader, dir } = addonCtx((req.params as any).id);
+    return { loader, kind: loader === "paper" ? "plugins" : "mods", files: await listAddons(dir), restart_needed: servers.isRunning((req.params as any).id) };
+  });
+  app.get("/api/servers/:id/addons/search", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const { s, loader } = addonCtx((req.params as any).id);
+    try {
+      return await searchModrinth(String((req.query as any).q ?? ""), loader, s.version);
+    } catch (e: any) {
+      return fail(reply, 502, `Could not reach Modrinth: ${e.message}`);
+    }
+  });
+  app.post("/api/servers/:id/addons/modrinth", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const { s, loader, dir } = addonCtx((req.params as any).id);
+    const slug = String((req.body as any)?.slug ?? "").trim();
+    if (!/^[\w.-]{2,64}$/.test(slug)) return fail(reply, 400, "Enter a Modrinth project name, e.g. luckperms");
+    const r = await installModrinth(slug, loader, s.version, dir);
+    sysLog("info", `server:${s.id}`, `installed ${r.installed.join(", ")} from Modrinth`);
+    return { ...r, note: "Restart the server to load new plugins/mods." };
+  });
+  app.post("/api/servers/:id/addons/upload", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const { dir } = addonCtx((req.params as any).id);
+    const f = await req.file();
+    if (!f) return fail(reply, 400, "Choose a .jar file");
+    const name = await saveUpload(dir, f.filename, await f.toBuffer());
+    return { ok: true, file: name, note: "Restart the server to load it." };
+  });
+  app.delete("/api/servers/:id/addons/:file", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const { dir } = addonCtx((req.params as any).id);
+    await removeAddon(dir, (req.params as any).file);
+    return { ok: true };
+  });
+  app.post("/api/servers/:id/bedrock", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const s = servers.get((req.params as any).id);
+    if (!s) return fail(reply, 404, "not found");
+    const enable = (req.body as any)?.enabled !== false;
+    if (enable && !loaderFor(s.software)) return fail(reply, 400, "iPhone/Bedrock players need a Paper or Fabric server (Geyser runs as a plugin or mod). Create a Paper server for this.");
+    s.bedrock = enable;
+    servers.save(s);
+    if (enable) await installGeyser(join(config.serversDir, s.id), loaderFor(s.software)!, s.bedrock_port ?? 19132).catch((e) => sysLog("warn", `server:${s.id}`, `Geyser will be installed on next start: ${e.message}`));
+    return { ok: true, bedrock: enable, bedrock_address: servers.bedrockAddress(s), note: "Restart the server to apply." };
+  });
+  app.post("/api/servers/:id/bedrock/players", async (req, reply) => {
+    if (!admin(req, reply)) return;
+    const s = servers.get((req.params as any).id);
+    if (!s) return fail(reply, 404, "not found");
+    const tag = String((req.body as any)?.gamertag ?? "").trim();
+    if (!/^[A-Za-z0-9 _]{1,16}$/.test(tag)) return fail(reply, 400, "Enter an Xbox gamertag (up to 16 letters, numbers, spaces)");
+    s.bedrock_players = [...new Set([...(s.bedrock_players ?? []), tag])];
+    servers.save(s);
+    servers.instances.get(s.id)?.bedrockAllow(tag);
+    return { ok: true, players: s.bedrock_players };
+  });
+
   app.post("/api/servers/:id/join-ai", async (req, reply) => {
     if (!admin(req, reply)) return;
     const id = (req.params as any).id;
@@ -764,6 +833,8 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       ops: b.ops ?? humans.slice(0, 1),
       ai_count: creatorIds.length,
       auto_start_bots: true,
+      bedrock: !!b.bedrock && ["paper", "fabric"].includes(b.software ?? "paper"),
+      bedrock_players: (b.bedrock_players ?? []).filter((t: string) => /^[A-Za-z0-9 _]{1,16}$/.test(t)),
       properties: { ...(b.rules?.pvp === false ? { pvp: "false" } : {}) },
       ...(b.teams?.length ? { teams: b.teams } : {}),
     } as any);

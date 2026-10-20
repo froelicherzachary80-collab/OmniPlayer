@@ -1,0 +1,10 @@
+target
+node_modules
+**/node_modules
+apps/web/dist
+data
+runtime
+tests/test-server/build
+tests/test-server/.gradle
+.git
+docs/screenshots

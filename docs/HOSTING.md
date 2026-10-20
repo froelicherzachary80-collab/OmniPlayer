@@ -10,7 +10,13 @@ OmniPlayer runs on a computer or Linux server; your iPhone is the remote control
 cp .env.example .env   # set OMNI_ADMIN_PASSWORD, OMNI_PUBLIC_HOST
 docker compose -f infra/docker/docker-compose.yml up -d --build
 ```
-The image bundles Java 21/25, FFmpeg, eSpeak NG and MediaMTX. Data (worlds, database, recordings) lives in the `omniplayer-data` volume. *The Docker files were written but could not be built in the development sandbox (no Docker daemon); please report issues.*
+The image bundles Java 21/25, FFmpeg, eSpeak NG and MediaMTX. Data (worlds, database, recordings) lives in the `omniplayer-data` volume.
+
+**HTTPS without buying a domain:** set `OMNI_DOMAIN=<ip-with-dashes>.sslip.io` (or your own domain) and add `-f infra/docker/docker-compose.domain.yml`; Caddy gets a Let's Encrypt certificate. `scripts/cloud-setup.sh` does all of this on a fresh Ubuntu VPS. See docs/IPHONE_ONLY.md.
+
+**Ports:** TCP 80/443 (website), 25565–25575 (Java), UDP 19132–19140 (Bedrock/iPhone via Geyser), UDP 8189 (WebRTC video).
+
+**Quick public link from a home computer:** `./scripts/share.sh` starts everything and opens a Cloudflare quick tunnel (`https://<random>.trycloudflare.com`) for the website. Minecraft ports are not tunnelled.
 
 ## Reaching it from outside your home
 Prefer a private network: **Tailscale/WireGuard** — install on the host and the iPhone, then use the tailnet name for both the dashboard and Minecraft. If you must expose it publicly:

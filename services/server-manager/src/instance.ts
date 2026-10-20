@@ -8,11 +8,12 @@ import { join } from "node:path";
 import { pickJava } from "./java.ts";
 import { preset, teamCommands, writeLifesteal } from "./presets.ts";
 import { download, exists, resolve } from "./versions.ts";
+import { downloadFabric, installGeyser, listAddons, addonDir, loaderFor } from "./addons.ts";
 
 export interface InstanceSpec {
   id: string;
   name: string;
-  software: "vanilla" | "paper" | "custom";
+  software: "vanilla" | "paper" | "fabric" | "custom";
   version: string;
   port: number;
   auth_mode: "online" | "offline";
@@ -30,6 +31,11 @@ export interface InstanceSpec {
   properties: Record<string, string>;
   eula_accepted_at: number | null;
   bind_ip?: string;
+  /** Let Bedrock players (iPhone, Android, consoles) join through Geyser + Floodgate. */
+  bedrock?: boolean;
+  bedrock_port?: number;
+  /** Bedrock gamertags allowed on allowlisted servers (Floodgate allowlist). */
+  bedrock_players?: string[];
 }
 
 export type InstanceState = "stopped" | "installing" | "starting" | "running" | "stopping" | "crashed";
@@ -188,6 +194,15 @@ export class ServerInstance extends EventEmitter {
     this.setState("installing");
     try {
       onProgress?.(`Resolving ${this.spec.software} ${this.spec.version}`);
+      if (this.spec.software === "fabric") {
+        await mkdir(this.dir, { recursive: true });
+        const f = await downloadFabric(this.spec.version, this.jarPath);
+        // The Fabric launcher downloads the official server jar on first start.
+        await writeFile(join(this.dir, "omniplayer-jar.json"), JSON.stringify({ software: "fabric", version: this.spec.version, javaMajor: majorFor(this.spec.version), ...f }, null, 2));
+        onProgress?.(`Installed Fabric loader ${f.loader}`);
+        this.setState("stopped");
+        return;
+      }
       const jar = await resolve(this.spec.software, this.spec.version);
       await writeFile(join(this.dir, "omniplayer-jar.json"), JSON.stringify(jar, null, 2));
       onProgress?.(`Downloading ${jar.url}`);
@@ -216,9 +231,10 @@ export class ServerInstance extends EventEmitter {
       args = parts.slice(1).map((a) => a.replace("{port}", String(this.spec.port)));
     } else {
       await this.install((m) => this.log(`[omniplayer] ${m}`));
-      let javaMajor = 21;
+      await this.ensureBedrock();
+      let javaMajor = majorFor(this.spec.version);
       try {
-        javaMajor = JSON.parse(await readFile(join(this.dir, "omniplayer-jar.json"), "utf8")).javaMajor ?? 21;
+        javaMajor = Math.max(javaMajor, JSON.parse(await readFile(join(this.dir, "omniplayer-jar.json"), "utf8")).javaMajor ?? 0);
       } catch {
         /* default */
       }
@@ -264,6 +280,17 @@ export class ServerInstance extends EventEmitter {
     }
   }
 
+  /** Installs Geyser + Floodgate when Bedrock (iPhone) play is enabled. */
+  async ensureBedrock(): Promise<void> {
+    if (!this.spec.bedrock) return;
+    const loader = loaderFor(this.spec.software);
+    if (!loader) throw new Error("Bedrock/iPhone players need a Paper or Fabric server (Geyser is a plugin/mod).");
+    const have = (await listAddons(addonDir(this.dir, loader))).map((a) => a.file.toLowerCase());
+    if (have.some((f) => f.startsWith("geyser")) && have.some((f) => f.startsWith("floodgate"))) return;
+    this.log("[omniplayer] installing Geyser + Floodgate for Bedrock/iPhone players");
+    await installGeyser(this.dir, loader, this.spec.bedrock_port ?? 19132);
+  }
+
   private onReady() {
     const pr = this.spec.smp_preset ? preset(this.spec.smp_preset) : undefined;
     if (this.firstStart) {
@@ -271,6 +298,13 @@ export class ServerInstance extends EventEmitter {
       if (this.spec.teams?.length) for (const c of teamCommands(this.spec.teams)) this.command(c);
     }
     if (this.spec.auth_mode === "offline") this.command("whitelist reload");
+    if (this.spec.bedrock) for (const g of this.spec.bedrock_players ?? []) this.command(`fwhitelist add ${g}`);
+  }
+
+  /** Allows a Bedrock gamertag through Floodgate's allowlist. */
+  bedrockAllow(gamertag: string) {
+    if (!(this.spec.bedrock_players ?? []).includes(gamertag)) this.spec.bedrock_players = [...(this.spec.bedrock_players ?? []), gamertag];
+    if (this.proc) this.command(`fwhitelist add ${gamertag}`);
   }
 
   command(line: string): void {
@@ -376,6 +410,14 @@ export class ServerInstance extends EventEmitter {
       return [];
     }
   }
+}
+
+/** Java requirement by Minecraft version (26.x needs Java 25). */
+export function majorFor(version: string): number {
+  const major = Number(version.split(".")[0]);
+  if (major >= 26) return 25;
+  const minor = Number(version.split(".")[1] ?? 0);
+  return minor >= 21 || (minor === 20 && Number(version.split(".")[2] ?? 0) >= 5) ? 21 : 17;
 }
 
 function offlineUuidIfOffline(spec: InstanceSpec, name: string): string {

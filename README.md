@@ -8,9 +8,14 @@ Original AI Minecraft players that join **real Minecraft Java Edition 26.3 serve
 - **Streaming** — OmniView frames → FFmpeg (H.264 + Opus) → MediaMTX → WebRTC (WHEP) with HLS fallback; recordings for past broadcasts and clips.
 - **VoiceBox** (`services/voicebox`) — local TTS (eSpeak NG built in; Piper or any OpenAI-compatible local server such as Kokoro/Chatterbox; optional consented RVC post-processing).
 - **API** (`apps/api`, Node + Fastify + SQLite) and **web app** (`apps/web`, React + Tailwind PWA): dashboard and the MineLive streaming site.
-- **Server manager** (`services/server-manager`) — downloads and runs official Vanilla or Paper servers with checksum verification, explicit EULA acceptance, console, metrics, allowlist, backups and SMP presets.
+- **Server manager** (`services/server-manager`) — downloads and runs official Vanilla, Paper (plugins) or Fabric (mods) servers with checksum verification, explicit EULA acceptance, console, metrics, allowlist, backups and SMP presets. Install plugins/mods from Modrinth by name (required dependencies included) or upload your own `.jar`.
+- **iPhone Minecraft players** — one switch installs Geyser + Floodgate so Minecraft on iPhone (Bedrock) joins the same world as the AI players and Java players.
 
 ![iPhone: creator control](docs/screenshots/iphone-creator.png)
+
+## iPhone only (no computer)
+
+Rent a cloud server, paste [`scripts/cloud-setup.sh`](scripts/cloud-setup.sh) into its *User data* box from Safari, and open `https://<your-ip>.sslip.io` about 15 minutes later. Then play with the AI from Minecraft on the same iPhone. Step by step, with prices: **[docs/IPHONE_ONLY.md](docs/IPHONE_ONLY.md)**.
 
 ## Quick start (one computer or Linux server)
 
@@ -28,10 +33,10 @@ Or with Docker: `docker compose -f infra/docker/docker-compose.yml up -d --build
 On your iPhone open `http://<your-computer>:8080`, sign in, then *Share → Add to Home Screen* to install it as an app.
 
 ### Play with your AI players
-1. **Play** tab → create a server (Vanilla 26.3, *Private Offline* to mix bots and humans).
+1. **Play** tab → create a server (Paper 26.3, *Private Offline* to mix bots and humans, iPhone players allowed).
 2. Pick up to 16 AI creators and give each an account (Accounts tab: offline profiles or Microsoft sign-in).
 3. Accept the Minecraft EULA → **Start Server** → **Join AI Players**.
-4. In Minecraft Java 26.3 → Multiplayer → add the address shown. Say *"follow me"*, *"let's build a house"*, *"help me mine diamonds"*, *"protect our base"*, *"come fight me"*, *"can you give me some food?"*…
+4. In Minecraft Java 26.3 → Multiplayer → add the address shown, or on iPhone: Minecraft → Servers → Add Server with the *iPhone / Bedrock* address and port 19132. Say *"follow me"*, *"let's build a house"*, *"help me mine diamonds"*, *"protect our base"*, *"come fight me"*, *"can you give me some food?"*…
 5. **Go live** on a creator to stream its POV to `/live/creator/<name>`.
 
 ## What is verified (see docs/TESTING.md for the full report)
@@ -49,7 +54,8 @@ On your iPhone open `http://<your-computer>:8080`, sign in, then *Share → Add 
 **Not verified in this build environment** (network policy blocked Mojang/PaperMC downloads and no Microsoft app was configured): running the official vanilla/Paper jar, crafting results (the Minestom test counterpart doesn't compute crafting), Microsoft sign-in, online-mode encryption against a real server, in-browser H.264 decoding (the available Chromium lacks H.264; iPhone Safari has it). These paths are implemented and ready for you to run — `MC_SERVER_JAR=... MC_ACCEPT_EULA=1 python3 -m unittest tests/integration/...` runs the same suites against vanilla.
 
 ## Honest limitations
-- An iPhone is the remote control; servers, bots, rendering and TTS run on a computer or Linux host (docs/HARDWARE.md).
+- An iPhone is the remote control and a Minecraft client; servers, bots, rendering and TTS run on a computer or cloud server (docs/IPHONE_ONLY.md, docs/HARDWARE.md).
+- Fabric mods that add blocks/items must be installed on every player's client too; Bedrock (iPhone) players and the AI bots can't install them, so the dashboard warns about such mods.
 - Rendering is CPU-based (~30 ms/frame at 480×270 on 3 cores, upscaled to 720p). More simultaneous streams need more cores.
 - Bots on online-mode servers can't send *signed* chat yet; the manager sets `enforce-secure-profile=false` for servers it creates.
 - Advanced goals (Nether, strongholds, dragon, redstone, enchanting, brewing, villager trading, fishing, breeding) are not implemented as autonomous skills yet; the bot says so honestly when asked.
