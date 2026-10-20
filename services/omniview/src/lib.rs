@@ -15,7 +15,6 @@ pub mod textures;
 use omnicore::data::GAME;
 use omnicore::world::{Chunk, World};
 use palette::{RenderInfo, Shape};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -95,34 +94,76 @@ fn hash3(x: i32, y: i32, z: i32) -> u32 {
     h ^ (h >> 15)
 }
 
-/// Fast block access with a one-entry chunk cache.
+/// Fast block access with a one-entry section cache (one HashMap lookup per
+/// 16x16x16 section crossed rather than per voxel).
 struct Lookup<'a> {
     world: &'a World,
-    last: Option<((i32, i32), Option<&'a Arc<Chunk>>)>,
+    key: (i32, i32, i32),
+    chunk: Option<&'a Arc<Chunk>>,
+    section: Option<&'a omnicore::world::Section>,
     min_y: i32,
     height: i32,
 }
 
+/// Per-frame column data: for each (x,z) the highest opaque block (for sky occlusion).
+struct Cover {
+    x0: i32,
+    z0: i32,
+    size: i32,
+    top: Vec<i32>,
+}
+
+const UNKNOWN: i32 = i32::MIN + 1;
+
+impl Cover {
+    fn new(cx: i32, cz: i32, size: i32) -> Self {
+        Self { x0: cx - size / 2, z0: cz - size / 2, size, top: vec![UNKNOWN; (size * size) as usize] }
+    }
+}
+
 impl<'a> Lookup<'a> {
     fn new(world: &'a World) -> Self {
-        Self { world, last: None, min_y: world.dimension.min_y, height: world.dimension.height }
+        Self { world, key: (i32::MAX, 0, 0), chunk: None, section: None, min_y: world.dimension.min_y, height: world.dimension.height }
     }
+
+    #[inline]
+    fn refresh(&mut self, x: i32, y: i32, z: i32) {
+        let rel = y - self.min_y;
+        let k = (x >> 4, rel >> 4, z >> 4);
+        if k == self.key {
+            return;
+        }
+        if (k.0, k.2) != (self.key.0, self.key.2) || self.key.0 == i32::MAX {
+            self.chunk = self.world.chunks.get(&(k.0, k.2));
+        }
+        self.key = k;
+        self.section = match self.chunk {
+            Some(c) if rel >= 0 && rel < self.height => c.sections.get((rel >> 4) as usize),
+            _ => None,
+        };
+    }
+
+    /// Block state, `None` if the chunk is not loaded (outside the world height = air).
     #[inline]
     fn get(&mut self, x: i32, y: i32, z: i32) -> Option<u32> {
-        let key = (x >> 4, z >> 4);
-        let ch = match self.last {
-            Some((k, c)) if k == key => c,
-            _ => {
-                let c = self.world.chunks.get(&key);
-                self.last = Some((key, c));
-                c
-            }
-        }?;
-        let rel = y - self.min_y;
-        if rel < 0 || rel >= self.height {
-            return Some(0);
+        self.refresh(x, y, z);
+        match self.section {
+            Some(s) => Some(match &s.blocks {
+                omnicore::world::Blocks::Single(v) => *v,
+                omnicore::world::Blocks::Full(a) => a[((((y - self.min_y) & 15) as usize) << 8) | (((z & 15) as usize) << 4) | (x & 15) as usize] as u32,
+            }),
+            None => self.chunk.map(|_| 0),
         }
-        Some(ch.sections[(rel >> 4) as usize].get((x & 15) as usize, (rel & 15) as usize, (z & 15) as usize))
+    }
+
+    /// True when the section containing the position is entirely air (call after `get`).
+    #[inline]
+    fn section_air(&mut self, x: i32, y: i32, z: i32) -> bool {
+        self.refresh(x, y, z);
+        match self.section {
+            Some(s) => matches!(s.blocks, omnicore::world::Blocks::Single(0)),
+            None => self.chunk.is_some(),
+        }
     }
 }
 
@@ -169,12 +210,22 @@ impl Renderer {
         let sun = sun_dir(scene.day_time);
         let ents: Vec<&EntityView> = scene.entities.iter().filter(|e| dist(e.pos, scene.eye) < s.max_distance).collect();
         let rows_per = s.height.div_ceil(s.threads.max(1));
+        // Highest non-empty section in view: rays above it can only hit sky.
+        let terrain_top = scene
+            .world
+            .chunks
+            .values()
+            .filter_map(|c| c.sections.iter().rposition(|sec| !matches!(sec.blocks, omnicore::world::Blocks::Single(0))))
+            .max()
+            .map(|i| scene.world.dimension.min_y + (i as i32 + 1) * 16)
+            .unwrap_or(scene.world.dimension.min_y);
+        let cover_size = (s.max_distance as i32) * 2 + 4;
         std::thread::scope(|sc| {
             for (band, chunk) in out.chunks_mut(rows_per * s.width * 3).enumerate() {
                 let ents = &ents;
                 sc.spawn(move || {
                     let mut look = Lookup::new(&scene.world);
-                    let mut cover: HashMap<(i32, i32), i32> = HashMap::new();
+                    let mut cover = Cover::new(scene.eye[0].floor() as i32, scene.eye[2].floor() as i32, cover_size);
                     let y0 = band * rows_per;
                     for (i, px) in chunk.chunks_mut(3).enumerate() {
                         let x = i % s.width;
@@ -182,7 +233,7 @@ impl Renderer {
                         let nx = (2.0 * (x as f64 + 0.5) / s.width as f64 - 1.0) * tan * aspect;
                         let ny = (1.0 - 2.0 * (y as f64 + 0.5) / s.height as f64) * tan;
                         let d = norm([f[0] + r[0] * nx + u[0] * ny, f[1] + r[1] * nx + u[1] * ny, f[2] + r[2] * nx + u[2] * ny]);
-                        let c = self.shade_ray(scene, &mut look, &mut cover, d, light, sun, ents);
+                        let c = self.shade_ray(scene, &mut look, &mut cover, d, light, sun, ents, terrain_top);
                         px[0] = (c[0].clamp(0.0, 1.0) * 255.0) as u8;
                         px[1] = (c[1].clamp(0.0, 1.0) * 255.0) as u8;
                         px[2] = (c[2].clamp(0.0, 1.0) * 255.0) as u8;
@@ -227,11 +278,11 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn shade_ray(&self, scene: &Scene, look: &mut Lookup, cover: &mut HashMap<(i32, i32), i32>, d: V3, light: f32, sun: V3, ents: &[&EntityView]) -> [f32; 3] {
+    fn shade_ray(&self, scene: &Scene, look: &mut Lookup, cover: &mut Cover, d: V3, light: f32, sun: V3, ents: &[&EntityView], terrain_top: i32) -> [f32; 3] {
         let maxd = self.settings.max_distance;
         let o = scene.eye;
         let mut tint: Option<([f32; 3], f64)> = None; // water tint
-        let hit = self.cast(look, o, d, maxd, scene, &mut tint);
+        let hit = self.cast(look, o, d, maxd, terrain_top, &mut tint);
         // Entities
         let mut ent_hit: Option<(f64, [f32; 3], u8)> = None;
         for e in ents {
@@ -279,9 +330,9 @@ impl Renderer {
             }
         }
         // Fog
-        let sky_c = self.sky([d[0], 0.0, d[2]], light, sun, scene.raining);
         let fog_start = maxd * 0.6;
         if tdist > fog_start {
+            let sky_c = self.sky([d[0], 0.0, d[2]], light, sun, scene.raining);
             let k = (((tdist - fog_start) / (maxd - fog_start)) as f32).clamp(0.0, 1.0);
             color = mix(color, sky_c, k);
         }
@@ -294,25 +345,36 @@ impl Renderer {
         color
     }
 
-    fn covered(&self, look: &mut Lookup, cache: &mut HashMap<(i32, i32), i32>, b: (i32, i32, i32), eye_y: i32) -> bool {
-        let top = *cache.entry((b.0, b.2)).or_insert_with(|| {
+    fn covered(&self, look: &mut Lookup, cover: &mut Cover, b: (i32, i32, i32), eye_y: i32) -> bool {
+        let (ix, iz) = (b.0 - cover.x0, b.2 - cover.z0);
+        if ix < 0 || iz < 0 || ix >= cover.size || iz >= cover.size {
+            return false;
+        }
+        let idx = (iz * cover.size + ix) as usize;
+        if cover.top[idx] == UNKNOWN {
             let start = (eye_y + 48).min(look.min_y + look.height - 1);
             let end = eye_y - 64;
             let mut y = start;
+            let mut found = i32::MIN;
             while y > end {
+                if look.section_air(b.0, y, b.2) {
+                    y = ((y - look.min_y) & !15) + look.min_y - 1;
+                    continue;
+                }
                 if let Some(s) = look.get(b.0, y, b.2) {
                     if self.info.get(s as usize).map(|i| i.opaque).unwrap_or(false) {
-                        return y;
+                        found = y;
+                        break;
                     }
                 }
                 y -= 1;
             }
-            i32::MIN
-        });
-        top > b.1
+            cover.top[idx] = found;
+        }
+        cover.top[idx] > b.1
     }
 
-    fn cast(&self, look: &mut Lookup, o: V3, d: V3, maxd: f64, scene: &Scene, tint: &mut Option<([f32; 3], f64)>) -> Option<Hit> {
+    fn cast(&self, look: &mut Lookup, o: V3, d: V3, maxd: f64, terrain_top: i32, tint: &mut Option<([f32; 3], f64)>) -> Option<Hit> {
         let mut x = o[0].floor() as i32;
         let mut y = o[1].floor() as i32;
         let mut z = o[2].floor() as i32;
@@ -322,8 +384,10 @@ impl Renderer {
         let mut tmax = [frac(o[0], step[0]) * inv[0], frac(o[1], step[1]) * inv[1], frac(o[2], step[2]) * inv[2]];
         let mut t = 0.0;
         let mut face: u8 = 1;
-        let _ = scene;
         loop {
+            if y >= terrain_top && step[1] >= 0 {
+                return None; // above all loaded terrain and not descending: sky
+            }
             let st = look.get(x, y, z)?;
             if st != 0 {
                 let info = &self.info[st as usize];

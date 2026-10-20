@@ -160,6 +160,15 @@ public final class TestServer {
                                 p.getInventory().addItemStack(ItemStack.of(Material.fromKey(a[2]), Integer.parseInt(a[3])));
                                 log("GAVE " + a[1] + " " + a[2] + " " + a[3]);
                             });
+                    case "wall" -> {
+                        // wall x1 z1 x2 z2 y height  (stone)
+                        int x1 = Integer.parseInt(a[1]), z1 = Integer.parseInt(a[2]), x2 = Integer.parseInt(a[3]), z2 = Integer.parseInt(a[4]);
+                        int y = Integer.parseInt(a[5]), h = Integer.parseInt(a[6]);
+                        for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++)
+                            for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++)
+                                for (int dy = 0; dy < h; dy++) world.setBlock(x, y + dy, z, Block.STONE);
+                        log("WALL done");
+                    }
                     case "zombie" -> {
                         EntityCreature z = new EntityCreature(EntityType.ZOMBIE);
                         z.setInstance(world, new Pos(Double.parseDouble(a[1]), Double.parseDouble(a[2]), Double.parseDouble(a[3]))).join();

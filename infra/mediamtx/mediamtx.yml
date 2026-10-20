@@ -1,0 +1,63 @@
+# MediaMTX configuration for MineLive.
+# Bots publish RTSP from the host running OmniPlayer; browsers read WebRTC (WHEP)
+# for low latency and HLS as a fallback. Recordings provide stream archives.
+logLevel: info
+logDestinations: [stdout]
+
+authMethod: internal
+authInternalUsers:
+  # Publishing is only allowed from the local machine / Docker network
+  # (bots and the API). Viewers may read and play back from anywhere.
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1', '172.16.0.0/12', '10.0.0.0/8']
+    permissions:
+      - action: publish
+      - action: api
+      - action: metrics
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+      - action: playback
+
+api: true
+apiAddress: 127.0.0.1:9997
+metrics: false
+
+playback: true
+playbackAddress: :9996
+
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtmp: false
+srt: false
+moq: false
+
+hls: true
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsAllowOrigins: ['*']
+
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcICEServers2: []
+
+pathDefaults:
+  record: true
+  recordPath: ./data/recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 10m
+  recordDeleteAfter: 168h
+
+paths:
+  '~^live/[a-z0-9_-]+$':
+    source: publisher

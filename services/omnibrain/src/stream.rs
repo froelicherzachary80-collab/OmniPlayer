@@ -44,8 +44,10 @@ impl Default for StreamConfig {
     fn default() -> Self {
         Self {
             output: String::new(),
-            width: 640,
-            height: 360,
+            // Internal render size; 480x270 sustains 30 fps on 3 CPU cores and is
+            // upscaled (nearest neighbour) to the 1280x720 output.
+            width: 480,
+            height: 270,
             out_width: 1280,
             out_height: 720,
             fps: 30,
@@ -199,16 +201,32 @@ impl Streamer {
             let info_file = info_file.clone();
             let cap_file = cap_file.clone();
             threads.push(std::thread::spawn(move || {
-                let renderer = Renderer::new(Settings { width: cfg2.width, height: cfg2.height, max_distance: cfg2.max_distance, threads: cfg2.threads, ..Default::default() });
-                let mut frame = vec![0u8; renderer.frame_bytes()];
+                // Adaptive quality: render at the largest preset that holds the target
+                // frame rate and upscale (nearest neighbour) to the fixed encoder input.
+                let (bw, bh) = (cfg2.width, cfg2.height);
+                let levels: Vec<(usize, usize)> = [1.0, 0.89, 0.8, 0.67, 0.5]
+                    .iter()
+                    .map(|k| (((bw as f64 * k) as usize).max(64) & !1, ((bh as f64 * k) as usize).max(36) & !1))
+                    .collect();
+                let mut renderers: Vec<Option<Renderer>> = levels.iter().map(|_| None).collect();
+                let mut level = 0usize;
+                let mut small = vec![0u8; bw * bh * 3];
+                let mut frame = vec![0u8; bw * bh * 3];
                 let period = Duration::from_secs_f64(1.0 / cfg2.fps as f64);
                 let start = Instant::now();
                 let mut n: u64 = 0;
                 let mut last_info = Instant::now() - Duration::from_secs(5);
-                let mut render_time = Duration::ZERO;
+                let mut window_start = Instant::now();
+                let mut window_frames = 0u64;
+                let mut window_render = Duration::ZERO;
+                let mut fast_windows = 0u32;
                 let radius = (cfg2.max_distance / 16.0).ceil() as i32 + 1;
                 while !sh.stop.load(Ordering::Relaxed) {
                     let t0 = Instant::now();
+                    let (lw, lh) = levels[level];
+                    let renderer = renderers[level].get_or_insert_with(|| {
+                        Renderer::new(Settings { width: lw, height: lh, max_distance: cfg2.max_distance, threads: cfg2.threads, ..Default::default() })
+                    });
                     let scene = {
                         let c = sh.client.lock().unwrap();
                         c.as_ref().map(|c| {
@@ -230,7 +248,13 @@ impl Streamer {
                     };
                     match scene {
                         Some((sc, info)) => {
-                            renderer.render(&sc, &mut frame);
+                            if (lw, lh) == (bw, bh) {
+                                renderer.render(&sc, &mut frame);
+                            } else {
+                                let buf = &mut small[..lw * lh * 3];
+                                renderer.render(&sc, buf);
+                                upscale(buf, lw, lh, &mut frame, bw, bh);
+                            }
                             if last_info.elapsed() > Duration::from_millis(500) {
                                 write_atomic(&info_file, &info);
                                 let (cap, at) = sh.caption.lock().unwrap().clone();
@@ -244,16 +268,36 @@ impl Streamer {
                             write_atomic(&info_file, "Reconnecting to the Minecraft server...");
                         }
                     }
-                    render_time += t0.elapsed();
+                    window_render += t0.elapsed();
                     if stdin.write_all(&frame).is_err() {
                         out2.emit("stream_error", json!({ "error": "ffmpeg closed its input" }));
                         break;
                     }
                     n += 1;
+                    window_frames += 1;
                     sh.frames.store(n, Ordering::Relaxed);
-                    if n % (cfg2.fps as u64 * 5) == 0 {
-                        let secs = start.elapsed().as_secs_f64();
-                        out2.emit("stream_stats", json!({ "frames": n, "fps": (n as f64 / secs * 10.0).round() / 10.0, "avg_render_ms": (render_time.as_secs_f64() * 1000.0 / n as f64 * 10.0).round() / 10.0 }));
+                    if window_start.elapsed() >= Duration::from_secs(5) {
+                        let secs = window_start.elapsed().as_secs_f64();
+                        let fps = window_frames as f64 / secs;
+                        let avg_ms = window_render.as_secs_f64() * 1000.0 / window_frames.max(1) as f64;
+                        let budget_ms = 1000.0 / cfg2.fps as f64;
+                        if fps < cfg2.fps as f64 * 0.93 && level + 1 < levels.len() {
+                            level += 1;
+                            fast_windows = 0;
+                        } else if avg_ms < budget_ms * 0.5 && level > 0 {
+                            fast_windows += 1;
+                            if fast_windows >= 4 {
+                                level -= 1;
+                                fast_windows = 0;
+                            }
+                        }
+                        out2.emit("stream_stats", json!({
+                            "frames": n, "fps": (fps * 10.0).round() / 10.0, "avg_render_ms": (avg_ms * 10.0).round() / 10.0,
+                            "render": format!("{}x{}", levels[level].0, levels[level].1), "uptime_s": start.elapsed().as_secs()
+                        }));
+                        window_start = Instant::now();
+                        window_frames = 0;
+                        window_render = Duration::ZERO;
                     }
                     if cfg2.duration_s > 0 && start.elapsed().as_secs() >= cfg2.duration_s {
                         break;
@@ -262,6 +306,9 @@ impl Streamer {
                     let el = start.elapsed();
                     if due > el {
                         std::thread::sleep(due - el);
+                    } else if el - due > Duration::from_secs(1) {
+                        // Too far behind: drop the backlog instead of bursting frames.
+                        n = (el.as_secs_f64() * cfg2.fps as f64) as u64;
                     }
                 }
                 drop(stdin);
@@ -330,6 +377,19 @@ impl Drop for Streamer {
     fn drop(&mut self) {
         if self.child.is_some() {
             self.stop();
+        }
+    }
+}
+
+/// Nearest-neighbour upscale of an RGB24 image.
+fn upscale(src: &[u8], sw: usize, sh: usize, dst: &mut [u8], dw: usize, dh: usize) {
+    for y in 0..dh {
+        let sy = y * sh / dh;
+        for x in 0..dw {
+            let sx = x * sw / dw;
+            let si = (sy * sw + sx) * 3;
+            let di = (y * dw + x) * 3;
+            dst[di..di + 3].copy_from_slice(&src[si..si + 3]);
         }
     }
 }

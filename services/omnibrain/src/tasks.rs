@@ -164,6 +164,12 @@ impl Task for Goto {
             }
         }
         if !self.started || self.idx >= self.path.len() {
+            // Finished the planned path: accept arrival at block granularity.
+            let f = ctx.feet_block();
+            let block_d = (((f.0 - self.goal.0).pow(2) + (f.1 - self.goal.1).pow(2) + (f.2 - self.goal.2).pow(2)) as f64).sqrt();
+            if self.started && block_d <= self.tolerance.max(0.0) + 0.5 {
+                return Status::Done;
+            }
             self.started = true;
             if self.replans > 25 || !self.plan(ctx) {
                 return Status::Failed(format!("no path to {:?}", self.goal));
