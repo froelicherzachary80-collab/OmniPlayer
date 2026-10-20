@@ -1,0 +1,16 @@
+{
+  "name": "@omniplayer/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node src/main.ts" },
+  "dependencies": {
+    "@fastify/multipart": "^10.1.4",
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.3.4",
+    "@omniplayer/server-manager": "0.1.0",
+    "@omniplayer/shared": "0.1.0",
+    "@omniplayer/streaming": "0.1.0",
+    "fastify": "^5.12.7"
+  }
+}

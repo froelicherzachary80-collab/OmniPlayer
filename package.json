@@ -1,0 +1,34 @@
+{
+  "name": "omniplayer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "OmniPlayer AI: original Minecraft AI players, server manager and the MineLive streaming site.",
+  "workspaces": [
+    "packages/shared",
+    "services/server-manager",
+    "services/streaming",
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build:rust": "cargo build --release -p omnibrain",
+    "build:web": "npm run build -w apps/web",
+    "build": "npm run build:rust && npm run build:web",
+    "start": "node apps/api/src/main.ts",
+    "dev:api": "node --watch apps/api/src/main.ts",
+    "dev:web": "npm run dev -w apps/web",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck -w apps/web",
+    "test": "npm run test:rust && npm run test:node",
+    "test:rust": "cargo test --workspace",
+    "test:node": "node --test --test-concurrency=1 'tests/api/*.test.ts'",
+    "test:integration": "cd tests/integration && python3 -m unittest -v"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.9.3"
+  }
+}
