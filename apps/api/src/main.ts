@@ -1049,7 +1049,12 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
 
   // ────────────────────────────── web app ──────────────────────────────
   if (existsSync(config.webDist)) {
-    await app.register(fastifyStatic, { root: config.webDist, wildcard: false, setHeaders: (res: any, p: string) => { if (p.endsWith("sw.js")) res.setHeader("Cache-Control", "no-cache"); } });
+    await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
+    // The service worker must always be revalidated so app updates reach installed PWAs.
+    app.addHook("onSend", async (req, reply, payload) => {
+      if (req.url.startsWith("/sw.js")) reply.header("Cache-Control", "no-cache");
+      return payload;
+    });
     app.setNotFoundHandler(async (req, reply) => {
       if (req.url.startsWith("/api/")) return fail(reply, 404, "Not found");
       reply.type("text/html");

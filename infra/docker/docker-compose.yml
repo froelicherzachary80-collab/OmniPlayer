@@ -1,0 +1,31 @@
+# docker compose -f infra/docker/docker-compose.yml up -d --build
+# Then open http://<host>:8080 on your iPhone. The admin password is printed in
+# `docker compose logs omniplayer` on first start unless OMNI_ADMIN_PASSWORD is set.
+services:
+  omniplayer:
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile }
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      OMNI_VOICEBOX_URL: http://voicebox:8095
+    volumes:
+      - omniplayer-data:/data
+    ports:
+      - "8080:8080"          # dashboard + MineLive (put HTTPS in front for the internet)
+      - "8889:8889"          # WebRTC signalling (also proxied through :8080/api/media)
+      - "8189:8189/udp"      # WebRTC media (ICE)
+      - "25565-25575:25565-25575" # Minecraft servers created in the dashboard
+    deploy:
+      resources:
+        limits: { cpus: "${OMNI_CPU_LIMIT:-6}", memory: "${OMNI_MEM_LIMIT:-12g}" }
+
+  voicebox:
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile }
+    restart: unless-stopped
+    command: ["python3", "services/voicebox/voicebox.py"]
+    environment:
+      VOICEBOX_HOST: 0.0.0.0
+      VOICEBOX_PORT: "8095"
+
+volumes:
+  omniplayer-data:

@@ -9,6 +9,7 @@ import type { BotManager } from "./bots.ts";
 import { config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { newId } from "./security.ts";
+import { preset, runtimeMediaMtxConfig } from "@omniplayer/streaming";
 
 export interface LiveInfo {
   stream_id: string;
@@ -45,7 +46,7 @@ export class StreamManager {
       return;
     }
     const base = await readFile(config.mediamtxConfig, "utf8");
-    const runtime = base.replace(/recordPath: .*/, `recordPath: ${join(config.recordingsDir, "%path", "%Y-%m-%d_%H-%M-%S-%f")}`);
+    const runtime = runtimeMediaMtxConfig(base, config.recordingsDir);
     const file = join(config.dataDir, "mediamtx.runtime.yml");
     await writeFile(file, runtime);
     this.mtx = spawn(config.mediamtxBin, [file], { cwd: config.dataDir, stdio: ["ignore", "pipe", "pipe"] });
@@ -79,12 +80,7 @@ export class StreamManager {
   }
 
   presetConfig() {
-    const presets: Record<string, any> = {
-      low: { width: 320, height: 180, out_width: 854, out_height: 480, fps: 30, bitrate_kbps: 1200 },
-      medium: { width: 480, height: 270, out_width: 1280, out_height: 720, fps: 30, bitrate_kbps: 2500 },
-      high: { width: 640, height: 360, out_width: 1280, out_height: 720, fps: 30, bitrate_kbps: 3500 },
-    };
-    return presets[config.streamPreset] ?? presets.medium;
+    return preset(config.streamPreset);
   }
 
   /** Starts the real POV pipeline. The stream is only "live" once frames reach MediaMTX. */
